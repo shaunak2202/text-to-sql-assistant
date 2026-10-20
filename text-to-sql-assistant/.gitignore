@@ -4,3 +4,4 @@ __pycache__/
 db/shop.db
 .pytest_cache/
 *.egg-info/
+eval/report.json
