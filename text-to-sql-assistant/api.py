@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from texttosql.engine import TextToSQLEngine
@@ -78,8 +79,20 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             "Schema-grounded natural language to SQL over a SQLite "
             "database, with a safety validator in front of execution."
         ),
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
+    )
+
+    # Permissive CORS so the local Vite dev server (or any static frontend)
+    # can call this API directly without a proxy. This is intentionally
+    # wide open for a local demo project; a real deployment should restrict
+    # allow_origins to the actual frontend's origin instead of "*".
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/health")
