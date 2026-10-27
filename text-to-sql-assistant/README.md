@@ -10,7 +10,8 @@ most of the work is in (1) turning a live DB schema into a prompt the model
 can actually use, (2) a validation layer that refuses to run anything that
 isn't a safe, single, read-only query against known tables/columns, and
 (3) an eval harness that measures whether the generated SQL actually returns
-the right rows.
+the right rows. Session 3 adds a small React front end so the whole pipeline
+is usable as an actual web app, not just a CLI or `curl`.
 
 ## Why this exists
 
@@ -37,8 +38,8 @@ question ──▶ SchemaIntrospector ──▶ prompt.build_prompt ──▶ ll
                                                              rows + timing
 ```
 
-exposed over two interfaces — a CLI and a FastAPI HTTP API — that both sit
-on top of the same `TextToSQLEngine`.
+exposed over three interfaces — a CLI, a FastAPI HTTP API, and a small React
+web UI — that all sit on top of the same `TextToSQLEngine`.
 
 1. **`texttosql/schema.py`** — introspects the live SQLite DB (tables,
    columns, types, foreign keys) and renders it as compact `CREATE TABLE`-like
@@ -60,9 +61,13 @@ on top of the same `TextToSQLEngine`.
 5. **`texttosql/engine.py`** — wires the above together and executes the
    validated query against the DB.
 6. **`api.py`** — a thin FastAPI layer exposing the same engine over HTTP
-   (`/ask`, `/schema`, `/health`), so a front end (or `curl`) can use this
-   without going through the CLI.
-7. **`eval/`** — a small hand-labeled set of (question, reference SQL) pairs
+   (`/ask`, `/schema`, `/health`), with permissive local-dev CORS so the
+   React front end can call it directly.
+7. **`frontend/`** — a small Vite + React + Tailwind single-page app that
+   talks to the API: ask a question, see the generated SQL (and whether it
+   came from OpenAI or the rule-based fallback), see the result table, and
+   browse the live schema.
+8. **`eval/`** — a small hand-labeled set of (question, reference SQL) pairs
    used to measure whether generated queries return *correct results*, not
    just plausible-looking SQL.
 
@@ -81,6 +86,14 @@ text-to-sql-assistant/
 ├── eval/
 │   ├── eval_set.py            # hand-labeled question -> reference SQL cases
 │   └── run_eval.py             # runs the eval set, reports accuracy
+├── frontend/                 # Vite + React + Tailwind web UI
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── api.js
+│   │   ├── main.jsx
+│   │   └── index.css
+│   ├── index.html
+│   └── package.json
 ├── cli.py                    # interactive REPL
 ├── api.py                    # FastAPI HTTP server (/ask, /schema, /health)
 └── tests/
@@ -90,7 +103,7 @@ text-to-sql-assistant/
     └── test_eval.py
 ```
 
-## Setup
+## Setup (backend)
 
 ```bash
 pip install -r requirements.txt
@@ -172,6 +185,36 @@ curl -X POST http://127.0.0.1:8000/ask \
 By default the API loads `db/shop.db`; point it elsewhere with
 `TEXT2SQL_DB_PATH=/path/to/your.db`.
 
+The API enables permissive CORS (`allow_origins=["*"]`) so the local
+frontend dev server can call it directly. That's fine for a local demo; a
+real deployment would lock this down to the actual front-end origin instead.
+
+## Web front end
+
+```bash
+# terminal 1: backend
+python db/seed.py
+uvicorn api:app --reload
+
+# terminal 2: frontend
+cd frontend
+npm install
+npm run dev
+```
+
+Then open the Vite dev URL (typically `http://localhost:5173`). It talks to
+the API at `http://127.0.0.1:8000` by default; override with a `VITE_API_URL`
+environment variable (see `frontend/.env.example`) if the backend is running
+somewhere else.
+
+The UI is intentionally simple: a text box to ask a question, a running
+history of question/SQL/result pairs with a badge showing whether the SQL
+came from OpenAI or the rule-based fallback, and a sidebar listing the live
+schema (pulled from `/schema`, not hard-coded) so it's obvious the app is
+grounded in the real database. There's no framework magic beyond `fetch` and
+`useState` — the interesting logic all lives in the Python backend, which is
+the point of this project.
+
 ## Sample database
 
 `db/seed.py` creates a small e-commerce schema: `customers`, `products`,
@@ -215,20 +258,25 @@ pytest
 
 Covers the validator (rejects destructive SQL, multi-statement injection,
 unknown tables), the schema introspector (correctly reads the seeded DB),
-the FastAPI endpoints, and the eval harness's expected pass/fail cases on
-the rule-based fallback.
+the FastAPI endpoints (including CORS headers), and the eval harness's
+expected pass/fail cases on the rule-based fallback.
+
+The frontend doesn't have an automated test suite yet — it's a thin,
+manually-tested UI layer over a backend that is thoroughly tested. That's a
+known, stated gap rather than a claim of test coverage that doesn't exist.
 
 ## Status / roadmap
 
 Working now: schema introspection, prompt construction, rule-based +
-OpenAI generation, SQL safety validation, CLI, FastAPI backend, and a
-result-based accuracy eval harness.
+OpenAI generation, SQL safety validation, CLI, FastAPI backend (with CORS
+for local frontend use), a result-based accuracy eval harness, and a
+Vite/React web UI that exercises the full pipeline end to end.
 
-Planned next:
-- A minimal React/Next.js front end that talks to the `/ask` endpoint,
-  so this is demoable as a full web app, not just a CLI or `curl`.
+Possible future work (not planned for this iteration):
 - Conversation memory so follow-up questions ("now just the ones from
   Illinois") can refine the previous query instead of starting over.
+- A smarter offline fallback (e.g. simple keyword-based WHERE-clause
+  extraction) to close some of the gap documented in the eval harness.
 
 ## Honesty note
 
@@ -236,4 +284,6 @@ The rule-based fallback is deliberately simple and is there so the
 validation/execution pipeline can be demoed and tested without any external
 API dependency — it is not presented as a substitute for an actual language
 model, and the README, code comments, and eval harness all say so
-explicitly, including the specific question types it gets wrong.
+explicitly, including the specific question types it gets wrong. Likewise,
+the frontend is a thin, honestly-scoped demo layer, not a claim of a
+polished production UI.
