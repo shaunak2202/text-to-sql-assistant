@@ -67,3 +67,23 @@ def test_startup_fails_on_missing_db(tmp_path):
     with pytest.raises(RuntimeError):
         with TestClient(app):
             pass
+
+
+def test_cors_headers_present_for_frontend_origin(client):
+    # The React dev server runs on localhost:5173; make sure the permissive
+    # CORS config actually lets a browser call this API from there.
+    resp = client.get("/health", headers={"Origin": "http://localhost:5173"})
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "*"
+
+
+def test_cors_preflight_for_ask(client):
+    resp = client.options(
+        "/ask",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "*"
